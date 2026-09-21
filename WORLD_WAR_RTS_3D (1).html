@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WORLD WAR RTS 3D</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#20251f;color:#eee;font-family:Arial,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
+canvas{display:block}
+#hud{position:fixed;inset:0;pointer-events:none}
+#topbar{position:absolute;left:14px;right:14px;top:12px;height:54px;display:flex;align-items:center;gap:10px}
+.panel{background:rgba(18,22,18,.86);border:1px solid rgba(255,255,255,.15);box-shadow:0 6px 24px rgba(0,0,0,.28);backdrop-filter:blur(4px);border-radius:8px}
+.stat{padding:8px 12px;min-width:120px;font-size:13px}
+.stat b{display:block;font-size:18px;margin-top:2px}
+#title{font-weight:700;letter-spacing:.5px;padding:9px 13px;font-size:14px}
+#controls{position:absolute;left:14px;bottom:14px;width:355px;padding:12px;font-size:12px;line-height:1.65}
+#controls strong{color:#fff}
+#selectionInfo{position:absolute;right:14px;bottom:14px;width:250px;padding:12px;display:none}
+#build{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);display:flex;gap:8px;pointer-events:auto}
+.buildBtn{border:1px solid #8d987d;background:#30382d;color:#f1f2e9;border-radius:7px;padding:10px 13px;cursor:pointer;font-weight:700;min-width:118px}
+.buildBtn:hover{background:#4a543f}.buildBtn small{display:block;font-weight:400;opacity:.75;margin-top:2px}
+#message{position:absolute;left:50%;top:84px;transform:translateX(-50%);padding:9px 16px;min-width:260px;text-align:center;display:none}
+#minimap{position:absolute;right:14px;top:78px;width:190px;height:135px;overflow:hidden;border-radius:7px}
+#minimap canvas{width:100%;height:100%}
+#start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 35%,rgba(68,78,62,.5),rgba(7,9,7,.96));z-index:20}
+#start .card{width:min(720px,92vw);padding:34px;border-radius:14px;background:rgba(16,19,16,.95);border:1px solid rgba(255,255,255,.14);text-align:center;box-shadow:0 28px 80px rgba(0,0,0,.5)}
+#start h1{font-size:42px;margin:0 0 10px;letter-spacing:1px}.sub{opacity:.7;margin-bottom:22px}
+#start button{font-size:18px;font-weight:700;padding:12px 28px;border-radius:8px;border:1px solid #aeb69e;background:#49533e;color:white;cursor:pointer}.hint{opacity:.7;font-size:12px;margin-top:16px}
+#pause{position:fixed;inset:0;display:none;z-index:30;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
+#pause .card{padding:28px 42px;text-align:center;border-radius:12px;background:rgba(15,18,15,.95)}
+#pause h2{margin:0 0 8px}.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="start"><div class="card"><h1>WORLD WAR RTS 3D</h1><div class="sub">見下ろし型・リアルタイム・戦場指揮ゲーム<br>銃声・砲声・爆発・環境音で戦場の臨場感を強化</div><button id="startBtn">作戦開始</button><div class="hint">左ドラッグ: 範囲選択　右クリック: 移動 / 攻撃　ホイール: ズーム　※音声ONで開始</div></div></div>
+<div id="pause"><div class="card"><h2>一時停止</h2><div>ESCで再開</div></div></div>
+<div id="hud">
+  <div id="topbar">
+    <div id="title" class="panel">WORLD WAR RTS 3D</div>
+    <div class="stat panel">戦力<b id="unitsStat">0 / 100</b></div>
+    <div class="stat panel">資材<b id="resStat">150</b></div>
+    <div class="stat panel">撃破<b id="killStat">0</b></div>
+    <div class="stat panel">HQ耐久<b id="hpStat">500</b></div>
+  </div>
+  <div id="message" class="panel"></div>
+  <div id="minimap" class="panel"><canvas id="mini"></canvas></div>
+  <div id="selectionInfo" class="panel"></div>
+  <div id="build">
+    <button class="buildBtn" data-unit="rifle">歩兵隊 <small>資材 40 / 8人</small></button>
+    <button class="buildBtn" data-unit="tank">戦車 <small>資材 90 / 1両</small></button>
+    <button class="buildBtn" data-unit="mg">機関銃班 <small>資材 65 / 4人</small></button>
+  </div>
+  <div id="controls" class="panel"><strong>操作</strong><br>左ドラッグ：ユニットを範囲選択<br>左クリック：ユニット/建物を選択<br>右クリック：移動 / 敵を攻撃<br>ホイール：カメラズーム<br>WASD / 画面端：カメラ移動<br>ESC：一時停止<br><br><strong>目的</strong><br>敵HQを破壊する。資材を使って部隊を生産し、敵の攻撃を防ぎながら前進しよう。</div>
+</div>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script>
+(() => {
+'use strict';
+const T = THREE;
+const scene = new T.Scene();
+scene.background = new T.Color(0x6f775f);
+scene.fog = new T.Fog(0x6f775f, 140, 300);
+const camera = new T.OrthographicCamera(-35,35,22,-22,.1,500);
+camera.position.set(0,65,46); camera.lookAt(0,0,0);
+const renderer = new T.WebGLRenderer({antialias:false,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5)); renderer.setSize(innerWidth,innerHeight); renderer.shadowMap.enabled=false; document.body.appendChild(renderer.domElement);
+scene.add(new T.HemisphereLight(0xd9e2d2,0x384233,2.0));
+const sun = new T.DirectionalLight(0xfff3dc,2.2); sun.position.set(-50,80,20); scene.add(sun);
+
+const MAP_W=150, MAP_H=100;
+const ground=new T.Mesh(new T.PlaneGeometry(MAP_W,MAP_H),new T.MeshLambertMaterial({color:0x70775c}));
+ground.rotation.x=-Math.PI/2; scene.add(ground);
+const gridMat=new T.LineBasicMaterial({color:0x858c6f,transparent:true,opacity:.28});
+for(let x=-75;x<=75;x+=10){const g=new T.BufferGeometry().setFromPoints([new T.Vector3(x,.03,-50),new T.Vector3(x,.03,50)]);scene.add(new T.Line(g,gridMat));}
+for(let z=-50;z<=50;z+=10){const g=new T.BufferGeometry().setFromPoints([new T.Vector3(-75,.03,z),new T.Vector3(75,.03,z)]);scene.add(new T.Line(g,gridMat));}
+
+const units=[], enemies=[], projectiles=[], effects=[], resources=[];
+const selected=new Set();
+let running=false, paused=false, gameOver=false, resourcesAmt=150, kills=0, enemyTimer=0, last=performance.now();
+const MAX_FORCES=100, MAX_RESOURCES=500, RESOURCE_REGEN=2.5;
+let audioCtx=null, audioMaster=null, ambientGain=null, ambientSources=[], ambientTimer=7+Math.random()*5, sfxStamp=0;
+let camTarget=new T.Vector3(0,0,0), camZoom=1;
+const mouse=new T.Vector2(); let drag=false, dragStart=null, dragBox;
+const $=id=>document.getElementById(id);
+
+
+function ensureAudio(){
+ if(audioCtx) return;
+ const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+ audioCtx=new AC(); audioMaster=audioCtx.createGain(); audioMaster.gain.value=.62; audioMaster.connect(audioCtx.destination);
+}
+async function startAudio(){ensureAudio(); if(!audioCtx)return; if(audioCtx.state==='suspended') await audioCtx.resume(); if(ambientSources.length) return;
+ const osc=audioCtx.createOscillator(), oscGain=audioCtx.createGain(); osc.type='sine'; osc.frequency.value=78; oscGain.gain.value=.012; osc.connect(oscGain).connect(audioMaster); osc.start();
+ const buffer=audioCtx.createBuffer(1,audioCtx.sampleRate*2,audioCtx.sampleRate), data=buffer.getChannelData(0);
+ for(let i=0;i<data.length;i++) data[i]=(Math.random()*2-1)*.32;
+ const noise=audioCtx.createBufferSource(), filter=audioCtx.createBiquadFilter(), ng=audioCtx.createGain(); noise.buffer=buffer; noise.loop=true; filter.type='lowpass'; filter.frequency.value=520; ng.gain.value=.018; noise.connect(filter).connect(ng).connect(audioMaster); noise.start();
+ ambientSources=[osc,noise]; ambientGain=oscGain;
+}
+function env(g,attack=.005,decay=.12,peak=.08){g.gain.cancelScheduledValues(audioCtx.currentTime);g.gain.setValueAtTime(.0001,audioCtx.currentTime);g.gain.linearRampToValueAtTime(peak,audioCtx.currentTime+attack);g.gain.exponentialRampToValueAtTime(.0001,audioCtx.currentTime+attack+decay)}
+function tone(freq,duration=.12,type='sine',peak=.06,detune=0){if(!audioCtx||!audioMaster)return;const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.type=type;o.frequency.value=freq;o.detune.value=detune;o.connect(g).connect(audioMaster);env(g,.004,duration*.8,peak);o.start();o.stop(audioCtx.currentTime+duration+.03)}
+function noiseBurst(duration=.08,peak=.08,filterFreq=1800){if(!audioCtx||!audioMaster)return;const b=audioCtx.createBuffer(1,Math.max(1,Math.floor(audioCtx.sampleRate*duration)),audioCtx.sampleRate),d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*(1-i/d.length);const src=audioCtx.createBufferSource(),f=audioCtx.createBiquadFilter(),g=audioCtx.createGain();src.buffer=b;f.type='bandpass';f.frequency.value=filterFreq;f.Q.value=.7;src.connect(f).connect(g).connect(audioMaster);env(g,.002,duration*.85,peak);src.start();src.stop(audioCtx.currentTime+duration+.02)}
+function playShot(type,side){if(!audioCtx)return;const now=audioCtx.currentTime;if(now-sfxStamp<.025)return;sfxStamp=now;noiseBurst(type==='tank'?.18:.055,type==='tank'?.22:.11,type==='tank'?420:2600);tone(type==='tank'?82:145,type==='tank'?.2:.08,'square',type==='tank'?.08:.025);}
+function playImpact(type='rifle'){if(!audioCtx)return;noiseBurst(type==='tank'?.12:.05,type==='tank'?.12:.06,type==='tank'?700:1700);if(type==='tank')tone(55,.18,'sawtooth',.05)}
+function playExplosion(big=false){if(!audioCtx)return;noiseBurst(big?.42:.22,big?.24:.14,big?240:420);tone(big?48:70,big?.42:.22,'sine',big?.1:.05);setTimeout(()=>{if(audioCtx) tone(big?38:58,.28,'triangle',.025)},big?70:40)}
+function playSelect(){tone(640,.07,'sine',.04);tone(900,.09,'sine',.025,4)}
+function playMove(){tone(420,.06,'triangle',.025);tone(520,.08,'triangle',.018)}
+function playBuild(){tone(210,.08,'square',.04);setTimeout(()=>tone(310,.11,'square',.05),70);setTimeout(()=>tone(470,.14,'sine',.04),150)}
+function playAlert(){tone(120,.12,'square',.045);setTimeout(()=>tone(92,.16,'square',.035),120)}
+function distantBoom(){if(!audioCtx||!running||paused)return;noiseBurst(.55,.06,160);tone(42,.55,'sine',.025);}
+function audioAmbientUpdate(dt){if(!audioCtx||!running||paused)return;ambientTimer-=dt;if(ambientTimer<=0){distantBoom();ambientTimer=9+Math.random()*15}}
+
+function mat(c){return new T.MeshLambertMaterial({color:c});}
+function box(w,h,d,c){const m=new T.Mesh(new T.BoxGeometry(w,h,d),mat(c));m.position.y=h/2;return m;}
+function cylinder(r,h,c,rad=8){const m=new T.Mesh(new T.CylinderGeometry(r,r,h,rad),mat(c));m.position.y=h/2;return m;}
+function addShadow(group,r=1){const s=new T.Mesh(new T.CircleGeometry(r,12),new T.MeshBasicMaterial({color:0x111111,transparent:true,opacity:.18,depthWrite:false}));s.rotation.x=-Math.PI/2;s.position.y=.04;group.add(s);}
+
+function makeSoldier(side='player',type='rifle'){
+ const g=new T.Group();
+ const bodyColor=side==='player'?0x66705a:0x615f54;
+ const skin=0xb48a6c;
+ g.add(box(.72,1.0,.5,bodyColor));
+ const head=new T.Mesh(new T.SphereGeometry(.31,10,7),mat(skin));head.position.y=1.35;g.add(head);
+ const helmet=cylinder(.34,.12,side==='player'?0x3f4937:0x4a4840,12);helmet.position.y=1.56;g.add(helmet);
+ const gun=box(.10,.10,.8,0x292b27);gun.position.set(.0,.98,.54);gun.rotation.x=.08;g.add(gun);
+ const legs=box(.14,.55,.18,0x464b42);legs.position.set(-.19,.55,.0);g.add(legs);const leg2=legs.clone();leg2.position.x=.19;g.add(leg2);
+ addShadow(g,.55);
+ return {group:g,type,side, hp:type==='tank'?150:type==='mg'?90:70,maxHp:type==='tank'?150:type==='mg'?90:70,speed:type==='tank'?5:type==='mg'?4.2:4.7,range:type==='tank'?9:type==='mg'?10:8,damage:type==='tank'?25:type==='mg'?12:8,cool:type==='tank'?1.3:type==='mg'?.75:1.05,cd:0,target:null,order:null,selected:false,dead:false};
+}
+function makeTank(side='player'){
+ const g=new T.Group(); const base=side==='player'?0x626a55:0x5c584d;
+ const hull=box(2.0,.55,2.6,base); hull.position.y=.38; g.add(hull);
+ const top=cylinder(.7,.35,base,10);top.position.y=.9;top.scale.z=1.1;g.add(top);
+ const barrel=box(.14,.14,1.7,0x2a2b28);barrel.position.set(0,.95,1.15);g.add(barrel);
+ addShadow(g,1.25);return {group:g,type:'tank',side,hp:150,maxHp:150,speed:5,range:11,damage:28,cool:1.25,cd:0,target:null,order:null,selected:false,dead:false};
+}
+function makeHQ(side){
+ const g=new T.Group(); const col=side==='player'?0x565f4b:0x544f45;
+ const base=box(8,2.2,7,col);base.position.y=1.1;g.add(base);
+ const tower=box(2,3,2,side==='player'?0x3d4535:0x413f39);tower.position.set(0,2.6,0);g.add(tower);
+ for(let x of [-2.4,2.4]){const block=box(1.3,1.7,2,col);block.position.set(x,1.5,0);g.add(block)}
+ addShadow(g,4.5);return {group:g,hp:500,maxHp:500,side,type:'hq',dead:false};
+}
+function makeResource(x,z){
+ const g=new T.Group();
+ for(let i=0;i<3;i++){const c=box(.7,.7,.7,0x8e6949);c.position.set((i-1)*.78,.35,(i%2)*.3-.15);g.add(c)}
+ addShadow(g,1.1);g.position.set(x,0,z);scene.add(g);resources.push({group:g,amount:800,max:800});
+}
+function placeTown(){
+ const houseMat=0x4b4f47;
+ for(let i=0;i<22;i++){
+   const x=Math.round((Math.random()*120-60)/5)*5, z=Math.round((Math.random()*78-39)/5)*5;
+   if(Math.abs(x)<14 && Math.abs(z)<12) continue;
+   const h=2+Math.random()*5, w=4+Math.random()*4,d=4+Math.random()*4;
+   const m=box(w,h,d,houseMat);m.position.set(x,h/2,z);scene.add(m);
+   if(Math.random()<.45){const roof=box(w+.5,.25,d+.5,0x353a34);roof.position.set(x,h+.12,z);scene.add(roof)}
+ }
+ // roads
+ for(const x of [-30,0,30]){const r=new T.Mesh(new T.PlaneGeometry(12,100),new T.MeshLambertMaterial({color:0x51544e}));r.rotation.x=-Math.PI/2;r.position.set(x,.02,0);scene.add(r)}
+ for(const z of [-25,0,25]){const r=new T.Mesh(new T.PlaneGeometry(150,10),new T.MeshLambertMaterial({color:0x51544e}));r.rotation.x=-Math.PI/2;r.position.set(0,.021,z);scene.add(r)}
+ for(let i=0;i<18;i++){
+   const x=(Math.random()<.5?-1:1)*(15+Math.random()*48), z=Math.random()*80-40;
+   const trunk=cylinder(.11,2.5,0x504638,6);trunk.position.set(x,0,z);scene.add(trunk);
+   const crown=new T.Mesh(new T.SphereGeometry(1.3,7,6),mat(0x44513a));crown.position.set(x,3,z);scene.add(crown);
+ }
+}
+function clearWorld(){for(const a of [...units,...enemies,...projectiles,...effects]){if(a.group)scene.remove(a.group);else if(a.mesh)scene.remove(a.mesh)}units.length=0;enemies.length=0;projectiles.length=0;effects.length=0;selected.clear()}
+placeTown();
+const playerHQ=makeHQ('player');playerHQ.group.position.set(-50,0,0);scene.add(playerHQ.group);
+const enemyHQ=makeHQ('enemy');enemyHQ.group.position.set(50,0,0);scene.add(enemyHQ.group);
+for(const p of [[-28,-22],[-8,28],[20,-24],[28,18],[0,0]])makeResource(p[0],p[1]);
+
+function addUnit(u,x,z,arr){u.group.position.set(x,.0,z);scene.add(u.group);arr.push(u);return u}
+function spawnStartingArmy(){
+ const formation=[[-7,-8],[-2,-8],[3,-8],[8,-8],[-7,-2],[-2,-2],[3,-2],[8,-2]];
+ formation.forEach(p=>addUnit(makeSoldier('player','rifle'),-45+p[0],p[1],units));
+ addUnit(makeTank('player'),-38,10,units); addUnit(makeSoldier('player','mg'),-47,11,units);
+ const ef=[[-6,-7],[-2,-7],[2,-7],[6,-7],[-6,-1],[-2,-1],[2,-1],[6,-1]];
+ ef.forEach(p=>addUnit(makeSoldier('enemy','rifle'),45-p[0],p[1],enemies));
+ addUnit(makeTank('enemy'),38,-10,enemies); addUnit(makeSoldier('enemy','mg'),47,-11,enemies);
+}
+spawnStartingArmy();
+
+function worldFromEvent(e){
+ const r=renderer.domElement.getBoundingClientRect();
+ mouse.x=((e.clientX-r.left)/r.width)*2-1;mouse.y=-((e.clientY-r.top)/r.height)*2+1;
+ const ray=new T.Raycaster();ray.setFromCamera(mouse,camera);const plane=new T.Plane(new T.Vector3(0,1,0),0);const p=new T.Vector3();ray.ray.intersectPlane(plane,p);return p;
+}
+function setSelected(u,on){u.selected=on;if(on)selected.add(u);else selected.delete(u);}
+function selectAt(p,add=false){if(!add)selected.forEach(u=>setSelected(u,false));let best=null,bd=999;for(const u of units){const d=u.group.position.distanceTo(p);if(d<bd&&d<2.2){best=u;bd=d}}if(best){setSelected(best,true);playSelect()}updateSelectionInfo()}
+function selectBox(a,b,add=false){if(!add)selected.forEach(u=>setSelected(u,false));const minx=Math.min(a.x,b.x),maxx=Math.max(a.x,b.x),minz=Math.min(a.z,b.z),maxz=Math.max(a.z,b.z);for(const u of units){const p=u.group.position;if(p.x>=minx&&p.x<=maxx&&p.z>=minz&&p.z<=maxz)setSelected(u,true)}updateSelectionInfo()}
+function updateSelectionInfo(){const el=$('selectionInfo');if(!selected.size){el.style.display='none';return}el.style.display='block';let hp=0;selected.forEach(u=>hp+=u.hp);el.innerHTML='<b>選択部隊</b><br>'+selected.size+' 部隊 / 合計HP '+Math.ceil(hp);}
+function issueOrder(p){if(!selected.size)return;const arr=[...selected];const cols=Math.ceil(Math.sqrt(arr.length));arr.forEach((u,i)=>{const ox=((i%cols)-(cols-1)/2)*2.2,oz=(Math.floor(i/cols)-(Math.ceil(arr.length/cols)-1)/2)*2.2;u.order={x:p.x+ox,z:p.z+oz};u.target=null;});playMove();showMessage('移動指示を出しました');}
+function enemyAt(p){let best=null,bd=3;for(const e of enemies){const d=e.group.position.distanceTo(p);if(d<bd){bd=d;best=e}}if(enemyHQ.group.position.distanceTo(p)<6)return enemyHQ;return best;}
+function showMessage(s,ms=1500){const el=$('message');el.textContent=s;el.style.display='block';clearTimeout(showMessage.t);showMessage.t=setTimeout(()=>el.style.display='none',ms)}
+
+renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
+renderer.domElement.addEventListener('pointerdown',e=>{
+ if(!running||paused)return;
+ if(e.button===0){drag=true;dragStart=worldFromEvent(e);if(dragBox)dragBox.remove();dragBox=new T.LineSegments(new T.EdgesGeometry(new T.PlaneGeometry(1,1)),new T.LineBasicMaterial({color:0xe4f0bb,transparent:true,opacity:.8}));dragBox.rotation.x=-Math.PI/2;scene.add(dragBox);}
+});
+renderer.domElement.addEventListener('pointermove',e=>{if(!drag||!dragStart)return;const p=worldFromEvent(e);const cx=(dragStart.x+p.x)/2,cz=(dragStart.z+p.z)/2,w=Math.max(1,Math.abs(p.x-dragStart.x)),h=Math.max(1,Math.abs(p.z-dragStart.z));dragBox.scale.set(w,h,1);dragBox.position.set(cx,.08,cz)});
+renderer.domElement.addEventListener('pointerup',e=>{
+ if(!running||paused)return; const p=worldFromEvent(e);
+ if(e.button===0){drag=false;if(dragStart){const dist=dragStart.distanceTo(p);if(dist<1.8)selectAt(p,e.shiftKey);else selectBox(dragStart,p,e.shiftKey)}if(dragBox){scene.remove(dragBox);dragBox=null}}
+ if(e.button===2){const t=enemyAt(p);if(t&&t!==enemyHQ){selected.forEach(u=>{u.target=t;u.order=null});playAlert();showMessage('攻撃目標を指定');}else if(t===enemyHQ){selected.forEach(u=>{u.target=t;u.order=null});playAlert();showMessage('敵HQへ攻撃指示');}else issueOrder(p)}
+});
+renderer.domElement.addEventListener('wheel',e=>{camZoom=T.MathUtils.clamp(camZoom+e.deltaY*.001,0.58,1.65);});
+
+function moveUnit(u,dt){const pos=u.group.position;if(u.target&&!u.target.dead){const d=pos.distanceTo(u.target.group.position);if(d>u.range*.92){u.order={x:u.target.group.position.x,z:u.target.group.position.z};}}
+ if(u.order){const dest=new T.Vector3(u.order.x,0,u.order.z);const dx=dest.x-pos.x,dz=dest.z-pos.z,dist=Math.hypot(dx,dz);if(dist<.4){u.order=null}else{pos.x+=(dx/dist)*u.speed*dt;pos.z+=(dz/dist)*u.speed*dt;u.group.rotation.y=Math.atan2(dx,dz)}}
+}
+function nearestTarget(u,list,range){let best=null,bd=range;for(const e of list){if(e.dead)continue;const d=u.group.position.distanceTo(e.group.position);if(d<bd){bd=d;best=e}}return best}
+function fire(u,t){if(u.cd>0||!t||t.dead)return;u.cd=u.cool;const a=u.group.position.clone().add(new T.Vector3(0,1,0)),b=t.group.position.clone().add(new T.Vector3(0,1,0));const dir=b.sub(a).normalize();const m=new T.Mesh(new T.CylinderGeometry(u.type==='tank'?.09:.07,u.type==='tank'?.09:.07,u.type==='tank'?1.15:.9,6),new T.MeshBasicMaterial({color:u.type==='tank'?0xffb35d:0xf0d36a}));m.position.copy(a.clone().addScaledVector(dir,.45));m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);scene.add(m);projectiles.push({mesh:m,from:a,to:t,speed:u.type==='tank'?54:46,damage:u.damage,life:1.6,side:u.side,type:u.type});playShot(u.type,u.side);}
+function applyDamage(t,d){if(t.type==='hq'){t.hp-=d;playImpact('tank');if(t.hp<=0){t.hp=0;t.dead=true;playExplosion(true);finish(t.side==='enemy')}return}t.hp-=d;playImpact(t.type);if(t.hp<=0){t.dead=true;kills+=t.side==='enemy'?1:0;playExplosion(t.type==='tank');scene.remove(t.group);if(t.side==='enemy'){const i=enemies.indexOf(t);if(i>=0)enemies.splice(i,1);resourcesAmt=Math.min(MAX_RESOURCES,resourcesAmt+5);showMessage('+5 資材: 敵撃破');}else{const i=units.indexOf(t);if(i>=0)units.splice(i,1);selected.delete(t)}}}
+function updateCombat(u,dt,hostiles){if(u.dead)return;u.cd=Math.max(0,u.cd-dt);let t=u.target;if(!t||t.dead||u.group.position.distanceTo(t.group.position)>u.range*1.25)t=nearestTarget(u,hostiles,u.range);if(t){u.target=t;if(u.group.position.distanceTo(t.group.position)<=u.range*1.05){u.order=null;u.group.rotation.y=Math.atan2(t.group.position.x-u.group.position.x,t.group.position.z-u.group.position.z);fire(u,t)}}}
+function enemyAI(dt){enemyTimer+=dt;if(enemyTimer>6){enemyTimer=0;if(enemies.length<24){const types=Math.random()<.18?'tank':'rifle';const e=types==='tank'?makeTank('enemy'):makeSoldier('enemy',Math.random()<.18?'mg':'rifle');const side=Math.random()<.5?-1:1;addUnit(e,45+Math.random()*5,Math.random()*50-25,enemies);e.order={x:-48,z:Math.random()*18-9};}}
+ for(const e of enemies){if(e.dead)continue;if(!e.target||e.target.dead){e.target=nearestTarget(e,units,70);if(!e.target)e.target=playerHQ}if(e.target&&!e.order&&e.group.position.distanceTo(e.target.group.position)>e.range*.8)e.order={x:e.target.group.position.x,z:e.target.group.position.z};moveUnit(e,dt);updateCombat(e,dt,units.concat([playerHQ]));}
+}
+function updateProjectiles(dt){for(let i=projectiles.length-1;i>=0;i--){const p=projectiles[i];p.life-=dt;if(p.life<=0){scene.remove(p.mesh);projectiles.splice(i,1);continue}const target=p.to;if(!target||target.dead){scene.remove(p.mesh);projectiles.splice(i,1);continue}const dst=target.group.position.clone().add(new T.Vector3(0,1,0));const d=p.mesh.position.distanceTo(dst);p.mesh.lookAt(dst);p.mesh.translateZ(p.speed*dt);if(d<2.1){makeBurst(dst);playImpact(p.type);applyDamage(target,p.damage);scene.remove(p.mesh);projectiles.splice(i,1)}}}
+function makeBurst(pos){const m=new T.Mesh(new T.SphereGeometry(.28,8,6),new T.MeshBasicMaterial({color:0xffdd9a,transparent:true,opacity:.85}));m.position.copy(pos);scene.add(m);effects.push({group:m,life:.25});}
+function updateEffects(dt){for(let i=effects.length-1;i>=0;i--){const e=effects[i];e.life-=dt;e.group.scale.multiplyScalar(1+dt*8);e.group.material.opacity=Math.max(0,e.life/.25);if(e.life<=0){scene.remove(e.group);effects.splice(i,1)}}}
+
+function buy(type){if(gameOver)return;const cfg={rifle:[40,8,'歩兵隊'],tank:[90,1,'戦車'],mg:[65,4,'機関銃班']}[type];if(!cfg)return;if(units.length+cfg[1]>MAX_FORCES){showMessage('戦力上限100。部隊を整理してください');playAlert();return}if(resourcesAmt<cfg[0]){showMessage('資材が足りません');return}resourcesAmt-=cfg[0];playBuild();if(type==='tank'){addUnit(makeTank('player'),-44+Math.random()*4,3+Math.random()*6,units)}else{for(let i=0;i<cfg[1];i++){const u=makeSoldier('player',type);addUnit(u,-44+Math.random()*7,2+Math.random()*10,units)}}showMessage(cfg[2]+'を生産');}
+document.querySelectorAll('.buildBtn').forEach(b=>b.addEventListener('click',()=>buy(b.dataset.unit)));
+
+function cameraUpdate(dt){const edge=26, speed=30;let dx=0,dz=0; if(keys.has('KeyA'))dx-=1;if(keys.has('KeyD'))dx+=1;if(keys.has('KeyW'))dz-=1;if(keys.has('KeyS'))dz+=1; const r=renderer.domElement.getBoundingClientRect();if(mousePos.x<r.left+edge)dx-=1;if(mousePos.x>r.right-edge)dx+=1;if(mousePos.y<r.top+edge)dz-=1;if(mousePos.y>r.bottom-edge)dz+=1;if(dx||dz){const l=Math.hypot(dx,dz);camTarget.x+=dx/l*speed*dt;camTarget.z+=dz/l*speed*dt}camTarget.x=T.MathUtils.clamp(camTarget.x,-40,40);camTarget.z=T.MathUtils.clamp(camTarget.z,-26,26);const s=camZoom;camera.left=-35*s;camera.right=35*s;camera.top=22*s;camera.bottom=-22*s;camera.position.x+=(camTarget.x-camera.position.x*.0-camera.position.x)*0.0;camera.position.set(camTarget.x,65*s,camTarget.z+46*s);camera.lookAt(camTarget.x,0,camTarget.z);camera.updateProjectionMatrix();}
+const keys=new Set();const mousePos={x:innerWidth/2,y:innerHeight/2};window.addEventListener('keydown',e=>{keys.add(e.code);if(e.code==='Escape'){paused=!paused;$('pause').style.display=paused?'flex':'none'}});window.addEventListener('keyup',e=>keys.delete(e.code));window.addEventListener('mousemove',e=>{mousePos.x=e.clientX;mousePos.y=e.clientY});
+
+function miniDraw(){const c=$('mini'),x=c.getContext('2d'),w=c.width=380,h=c.height=270;x.clearRect(0,0,w,h);x.fillStyle='#67705a';x.fillRect(0,0,w,h);x.fillStyle='#4c514b';x.fillRect(0,h/2-14,w,28);x.fillRect(w/2-16,0,32,h);for(const u of units){x.fillStyle='#c8d3b8';const px=(u.group.position.x+75)/150*w,pz=(u.group.position.z+50)/100*h;x.fillRect(px-3,pz-3,6,6)}for(const e of enemies){x.fillStyle='#b6a69a';const px=(e.group.position.x+75)/150*w,pz=(e.group.position.z+50)/100*h;x.fillRect(px-3,pz-3,6,6)}x.fillStyle='#e7e6d2';x.fillRect((playerHQ.group.position.x+75)/150*w-5,(0+50)/100*h-5,10,10);x.fillStyle='#b15d56';x.fillRect((enemyHQ.group.position.x+75)/150*w-5,45/100*h,10,10)}
+function hud(){ $('unitsStat').textContent=units.length+' / '+MAX_FORCES;$('resStat').textContent=Math.floor(resourcesAmt);$('killStat').textContent=kills;$('hpStat').textContent=Math.ceil(playerHQ.hp);}
+function finish(enemyDestroyed){gameOver=true;running=false;const box=document.createElement('div');box.style.cssText='position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.65)';box.innerHTML='<div style="padding:36px 50px;border-radius:14px;background:#141814;text-align:center;border:1px solid #ffffff22"><h1 style="margin:0 0 10px">'+(enemyDestroyed?'作戦成功':'作戦失敗')+'</h1><p style="opacity:.75">撃破数: '+kills+'</p><button id="again" style="font-size:17px;padding:10px 24px;border-radius:7px;border:1px solid #999;background:#454d3e;color:white;cursor:pointer">再戦</button></div>';document.body.appendChild(box);box.querySelector('#again').onclick=()=>location.reload();}
+
+$('startBtn').onclick=async()=>{$('start').style.display='none';running=true;last=performance.now();await startAudio();playAlert();showMessage('作戦開始。敵HQを撃破せよ',2200)};
+function loop(now){requestAnimationFrame(loop);let dt=Math.min(.05,(now-last)/1000);last=now;if(running&&!paused&&!gameOver){resourcesAmt=Math.min(MAX_RESOURCES,resourcesAmt+RESOURCE_REGEN*dt);audioAmbientUpdate(dt);cameraUpdate(dt);for(const u of units){moveUnit(u,dt);updateCombat(u,dt,enemies.concat([enemyHQ]));}enemyAI(dt);updateProjectiles(dt);updateEffects(dt);hud();miniDraw();for(const u of units){if(u.selected){if(!u._ring){const ring=new T.Mesh(new T.RingGeometry(.72, .9, 18),new T.MeshBasicMaterial({color:0xe4f0bb,side:T.DoubleSide,transparent:true,opacity:.9}));ring.rotation.x=-Math.PI/2;ring.position.y=.06;u.group.add(ring);u._ring=ring}}else if(u._ring){u.group.remove(u._ring);u._ring=null}}}renderer.render(scene,camera)}
+requestAnimationFrame(loop);
+addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);});
+})();
+</script>
+</body>
+</html>
